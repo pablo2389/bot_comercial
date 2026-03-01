@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 # Librerías para el PDF
 from reportlab.lib.pagesizes import letter
+# 
 from reportlab.pdfgen import canvas
 
 # --- 1. CONFIGURACIÓN INICIAL ---
@@ -18,6 +19,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Diccionario global para manejar los carritos de los usuarios
 carritos = {}
 
 def obtener_teclado():
@@ -90,7 +92,9 @@ async def enviar_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def procesar_entrada_carrito(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in carritos: return
+    if user_id not in carritos: 
+        return
+    
     partes = re.split(r'[,\.\n]', update.message.text)
     for parte in partes:
         pedazo = parte.strip()
@@ -98,37 +102,75 @@ async def procesar_entrada_carrito(update: Update, context: ContextTypes.DEFAULT
         num = re.findall(r'\d+', pedazo)
         pal = re.findall(r'[a-zA-ZáéíóúÁÉÍÓÚñÑ]+', pedazo)
         if not num: continue
+        
         cant, precio = (int(num[0]), int(num[-1])) if len(num) >= 2 else (1, int(num[0]))
-        carritos[user_id].append({"producto": " ".join(pal) or "Prod", "cantidad": cant, "precio": precio, "subtotal": cant * precio})
+        carritos[user_id].append({
+            "producto": " ".join(pal) or "Prod", 
+            "cantidad": cant, 
+            "precio": precio, 
+            "subtotal": cant * precio
+        })
+    
     resumen = "📝 **CARRITO:**\n" + "\n".join([f"• {i['cantidad']}x {i['producto']} — ${i['subtotal']}" for i in carritos[user_id]])
     await update.message.reply_text(f"{resumen}\n\n💰 **TOTAL: ${sum(i['subtotal'] for i in carritos[user_id])}**", parse_mode='Markdown')
 
 async def finalizar_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user.id
-    if u not in carritos or not carritos[u]: return
-    cliente = " ".join(context.args).lower() if context.args else "cliente"
+    
+    if u not in carritos or not carritos[u]:
+        await update.message.reply_text("⚠️ El carrito está vacío.")
+        return
+
+    # Si se usa /ticket Juan, toma Juan. Si se usa el botón, usa "cliente"
+    cliente = " ".join(context.args).lower() if (context.args and len(context.args) > 0) else "cliente"
     total = sum(i['subtotal'] for i in carritos[u])
+    
     txt_ws = f"🧾 *TICKET: {cliente.upper()}*\n"
     for i in carritos[u]:
         txt_ws += f"• {i['cantidad']}x {i['producto']}: ${i['subtotal']}\n"
-        supabase.table("ventas").insert({"producto": f"{i['cantidad']}x {i['producto']}", "precio": i['subtotal'], "cliente": cliente, "tipo": "venta", "telegram_id": str(u), "fecha": datetime.now().isoformat()}).execute()
+        # Registro en DB
+        supabase.table("ventas").insert({
+            "producto": f"{i['cantidad']}x {i['producto']}", 
+            "precio": i['subtotal'], 
+            "cliente": cliente, 
+            "tipo": "venta", 
+            "telegram_id": str(u), 
+            "fecha": datetime.now().isoformat()
+        }).execute()
+    
     txt_ws += f"\n💰 *TOTAL: ${total}*"
     url_ws = f"https://wa.me/?text={urllib.parse.quote(txt_ws)}"
-    kb = [[InlineKeyboardButton("💵 Efectivo", callback_data=f"p_efe_{cliente}_{total}"), InlineKeyboardButton("📱 Transf.", callback_data=f"p_tra_{cliente}_{total}")],
-          [InlineKeyboardButton("⏳ Fiado", callback_data=f"p_fia_{cliente}_{total}")],
-          [InlineKeyboardButton("📲 ENVIAR TICKET (WhatsApp)", url=url_ws)]]
+    
+    kb = [
+        [InlineKeyboardButton("💵 Efectivo", callback_data=f"p_efe_{cliente}_{total}"), 
+         InlineKeyboardButton("📱 Transf.", callback_data=f"p_tra_{cliente}_{total}")],
+        [InlineKeyboardButton("⏳ Fiado", callback_data=f"p_fia_{cliente}_{total}")],
+        [InlineKeyboardButton("📲 ENVIAR TICKET (WhatsApp)", url=url_ws)]
+    ]
+    
     await update.message.reply_text(f"🧾 **TOTAL: ${total}**\n¿Cómo pagó?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    # Vaciar carrito después de procesar
     carritos[u] = []
 
 async def manejador_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     markup = q.message.reply_markup
     d = q.data.split("_")
+    
     if d[0] == "p":
         t, c, m = d[1], d[2], int(d[3])
         tipo = "EFECTIVO" if t == 'efe' else "TRANSFERENCIA" if t == 'tra' else "FIADO"
+        
         if t != 'fia':
-            supabase.table("ventas").insert({"producto": f"PAGO {tipo}", "precio": m, "cliente": c, "tipo": "pago", "telegram_id": str(q.from_user.id), "fecha": datetime.now().isoformat()}).execute()
+            supabase.table("ventas").insert({
+                "producto": f"PAGO {tipo}", 
+                "precio": m, 
+                "cliente": c, 
+                "tipo": "pago", 
+                "telegram_id": str(q.from_user.id), 
+                "fecha": datetime.now().isoformat()
+            }).execute()
+            
         await q.edit_message_text(f"✅ **REGISTRADO: {c.upper()}**\n💰 ${m} ({tipo})\n\nPodés seguir enviando el ticket:", reply_markup=markup, parse_mode='Markdown')
 
 async def gestionar_mensajes(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,23 +179,51 @@ async def gestionar_mensajes(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if t == '🛒 Carrito Nuevo': 
         carritos[u] = [] 
         await update.message.reply_text("🛒 **CARRITO ABIERTO**", parse_mode='Markdown')
+    
+    elif t == '🧾 Finalizar Ticket':
+        await finalizar_ticket(update, context)
+
+    elif t == '❌ Borrar Último':
+        if u in carritos and carritos[u]:
+            carritos[u].pop()
+            await update.message.reply_text("🗑️ Último producto eliminado.")
+        else:
+            await update.message.reply_text("El carrito ya está vacío.")
+
+    elif t == '🗑️ Vaciar Carrito':
+        carritos[u] = []
+        await update.message.reply_text("🧹 Carrito vaciado por completo.")
+
     elif t == '📄 Reporte PDF': 
         await enviar_pdf(update, context)
+        
     elif t == '📊 Caja del Día':
         res = supabase.table("ventas").select("*").eq("telegram_id", str(u)).gte("fecha", date.today().isoformat()).execute()
         v = sum(r['precio'] for r in res.data if r['tipo'] == 'venta')
         p = sum(r['precio'] for r in res.data if r['tipo'] == 'pago')
         await update.message.reply_text(f"📊 **HOY**\n💰 Ventas: ${v}\n💵 Cobrado: ${p}", parse_mode='Markdown')
+        
     elif t == '🔄 Reiniciar Menú': 
         await start(update, context)
+        
     elif u in carritos: 
+        # Si el usuario tiene un carrito activo y no es un comando de botón, procesamos el texto
         await procesar_entrada_carrito(update, context)
 
+# --- 4. EJECUCIÓN ---
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
+    
+    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ticket", finalizar_ticket))
     app.add_handler(CommandHandler("pdf", enviar_pdf))
+    
+    # Callbacks (Botones Inline)
     app.add_handler(CallbackQueryHandler(manejador_callback))
+    
+    # Mensajes de texto y botones del teclado
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestionar_mensajes))
+    
+    print("Bot en marcha...")
     app.run_polling()
