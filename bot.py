@@ -259,23 +259,34 @@ async def gestionar_mensajes(update: Update, context: ContextTypes.DEFAULT_TYPE)
 if __name__ == '__main__':
     print("--- INICIANDO SISTEMA ---")
     
-    # 1. Espera de seguridad para que la red del servidor se estabilice
-    time.sleep(10) 
+    # 1. Espera inicial obligatoria para entornos Cloud
+    time.sleep(15) 
 
     while True:
         try:
-            # Re-creamos la app en cada intento por si el loop interno quedó corrupto
-            app = ApplicationBuilder().token(TOKEN).connect_timeout(60).read_timeout(60).write_timeout(60).build()
+            print("Configurando Application...")
+            # Construimos la app dentro del bucle para asegurar una base limpia en cada reintento
+            app = (
+                ApplicationBuilder()
+                .token(TOKEN)
+                .connect_timeout(30)
+                .read_timeout(30)
+                .write_timeout(30)
+                .pool_timeout(30)
+                .build()
+            )
             
             app.add_handler(CommandHandler("start", start))
             app.add_handler(CommandHandler("inicio", start))
             app.add_handler(CallbackQueryHandler(manejador_callback))
             app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestionar_mensajes))
 
-            print("Intentando conectar con Telegram...")
-            app.run_polling(drop_pending_updates=True)
+            print("Intentando conectar con Telegram API...")
+            # drop_pending_updates evita que el bot se bloquee con mensajes viejos al arrancar
+            app.run_polling(drop_pending_updates=True, close_loop=False)
             
         except Exception as e:
-            print(f"⚠️ Error de conexión o DNS: {e}")
-            print("Reintentando en 15 segundos...")
-            time.sleep(15)
+            print(f"⚠️ ERROR CRÍTICO DE RED: {e}")
+            print("DNS no disponible o Telegram caído. Reintentando en 20 segundos...")
+            time.sleep(20)
+            continue # Reinicia el bucle y vuelve a intentar construir la app
