@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -256,7 +257,7 @@ async def gestionar_mensajes(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"✅ {prod_nom} agregado. Subtotal: ${can * pre}\nTotal actual: ${sum(i['subtotal'] for i in carritos[u])}")
 
 if __name__ == '__main__':
-    # Aumentamos los tiempos de espera al máximo para redes inestables
+    # Configuración de la aplicación con timeouts extendidos
     app = ApplicationBuilder().token(TOKEN).connect_timeout(60).read_timeout(60).write_timeout(60).build()
     
     app.add_handler(CommandHandler("start", start))
@@ -264,7 +265,14 @@ if __name__ == '__main__':
     app.add_handler(CallbackQueryHandler(manejador_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestionar_mensajes))
     
-    print("--- INICIANDO BOT ---")
+    print("--- INICIANDO SISTEMA ---")
     
-    # El parámetro 'close_loop=False' ayuda en algunos entornos de contenedores
-    app.run_polling(drop_pending_updates=True)
+    # Bucle infinito para evitar caídas por error DNS en Hugging Face
+    while True:
+        try:
+            print("Intentando conectar con Telegram...")
+            app.run_polling(drop_pending_updates=True)
+        except Exception as e:
+            print(f"Error detectado: {e}")
+            print("Reiniciando conexión en 5 segundos...")
+            time.sleep(5)
