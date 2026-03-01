@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 
 # Librerías para el PDF
 from reportlab.lib.pagesizes import letter
-# 
 from reportlab.pdfgen import canvas
 
 # --- 1. CONFIGURACIÓN INICIAL ---
@@ -81,7 +80,8 @@ async def enviar_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user.id
     await update.message.reply_text("⏳ Generando reporte de hoy...")
     hoy = date.today().isoformat()
-    res = supabase.table("ventas").select("*").eq("telegram_id", str(u)).gte("fecha", hoy).execute()
+    # Cambiado a 'id_telegrama'
+    res = supabase.table("ventas").select("*").eq("id_telegrama", str(u)).gte("fecha", hoy).execute()
     if not res.data:
         await update.message.reply_text("❌ No hay ventas registradas hoy.")
         return
@@ -121,20 +121,19 @@ async def finalizar_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ El carrito está vacío.")
         return
 
-    # Si se usa /ticket Juan, toma Juan. Si se usa el botón, usa "cliente"
     cliente = " ".join(context.args).lower() if (context.args and len(context.args) > 0) else "cliente"
     total = sum(i['subtotal'] for i in carritos[u])
     
     txt_ws = f"🧾 *TICKET: {cliente.upper()}*\n"
     for i in carritos[u]:
         txt_ws += f"• {i['cantidad']}x {i['producto']}: ${i['subtotal']}\n"
-        # Registro en DB
+        # Cambiado a 'id_telegrama'
         supabase.table("ventas").insert({
             "producto": f"{i['cantidad']}x {i['producto']}", 
             "precio": i['subtotal'], 
             "cliente": cliente, 
             "tipo": "venta", 
-            "telegram_id": str(u), 
+            "id_telegrama": str(u), 
             "fecha": datetime.now().isoformat()
         }).execute()
     
@@ -149,7 +148,6 @@ async def finalizar_ticket(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.message.reply_text(f"🧾 **TOTAL: ${total}**\n¿Cómo pagó?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
-    # Vaciar carrito después de procesar
     carritos[u] = []
 
 async def manejador_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,12 +160,13 @@ async def manejador_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         tipo = "EFECTIVO" if t == 'efe' else "TRANSFERENCIA" if t == 'tra' else "FIADO"
         
         if t != 'fia':
+            # Cambiado a 'id_telegrama'
             supabase.table("ventas").insert({
                 "producto": f"PAGO {tipo}", 
                 "precio": m, 
                 "cliente": c, 
                 "tipo": "pago", 
-                "telegram_id": str(q.from_user.id), 
+                "id_telegrama": str(q.from_user.id), 
                 "fecha": datetime.now().isoformat()
             }).execute()
             
@@ -198,7 +197,8 @@ async def gestionar_mensajes(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await enviar_pdf(update, context)
         
     elif t == '📊 Caja del Día':
-        res = supabase.table("ventas").select("*").eq("telegram_id", str(u)).gte("fecha", date.today().isoformat()).execute()
+        # Cambiado a 'id_telegrama'
+        res = supabase.table("ventas").select("*").eq("id_telegrama", str(u)).gte("fecha", date.today().isoformat()).execute()
         v = sum(r['precio'] for r in res.data if r['tipo'] == 'venta')
         p = sum(r['precio'] for r in res.data if r['tipo'] == 'pago')
         await update.message.reply_text(f"📊 **HOY**\n💰 Ventas: ${v}\n💵 Cobrado: ${p}", parse_mode='Markdown')
@@ -207,23 +207,18 @@ async def gestionar_mensajes(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await start(update, context)
         
     elif u in carritos: 
-        # Si el usuario tiene un carrito activo y no es un comando de botón, procesamos el texto
         await procesar_entrada_carrito(update, context)
 
-# --- 4. EJECUCIÓN ---
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).build()
-    
-    # Comandos
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ticket", finalizar_ticket))
     app.add_handler(CommandHandler("pdf", enviar_pdf))
-    
-    # Callbacks (Botones Inline)
     app.add_handler(CallbackQueryHandler(manejador_callback))
-    
-    # Mensajes de texto y botones del teclado
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestionar_mensajes))
     
-    print("Bot en marcha...")
+    print("Bot en marcha (id_telegrama corregido)...")# Mensajes de texto y botones del teclado
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gestionar_mensajes))
+    
+    print("Bot en marcha (id_telegrama corregido)...")
     app.run_polling()
